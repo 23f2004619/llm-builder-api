@@ -15,35 +15,58 @@ if (process.env.NODE_ENV !== 'production') {
 const express = require('express');
 const bodyParser = require('body-parser');
 
-// Require the processor file from the parent directory
-const processRequest = require('../processor'); 
+// Do NOT require the processor at module load time. Lazy-require inside the handler
+// to avoid module-load crashes in the serverless environment and to allow health checks.
 
 const app = express();
 const EXPECTED_SECRET = process.env.EXPECTED_SECRET;
 
-app.use(bodyParser.json({ limit: '50mb' })); 
+app.use(bodyParser.json({ limit: '50mb' }));
 
-// 🎯 CRITICAL FIX: The Express route must be '/'
+// Health check route for GET requests (helps debugging and prevents 500 on browser visits)
+app.get('/', (req, res) => {
+    return res.status(200).json({ status: 'ok', message: 'API endpoint is up. POST to this endpoint with the task JSON.' });
+});
+
+// 🎯 CRITICAL: The Express route must be '/'
 app.post('/', (req, res) => {
-// ... (The rest of the code logic is exactly correct and remains unchanged)
+    // Lazy-require the processor to avoid crashes at module import time.
+    let processRequest;
+    try {
+        processRequest = require('../processor');
+    } catch (e) {
+        console.error('Failed to load processor module:', e);
+        // Return 500 so the caller knows there's an internal setup problem
+        return res.status(500).json({ error: 'Processor module failed to load.' });
+    }
 
-    const data = req.body;
-    const { secret, task, round } = data;
+    const data = req.body;
+    const { secret, task, round } = data || {};
 
-    // 1. Verify Secret
-    if (!secret || secret !== EXPECTED_SECRET) {
-        console.error(`Unauthorized attempt for task ${task}, round ${round}`);
-        // Return 403 Forbidden
-        return res.status(403).json({ error: "Invalid secret provided." });
-    }
+    // 1. Verify Secret
+    if (!secret || secret !== EXPECTED_SECRET) {
+        console.error(`Unauthorized attempt for task ${task}, round ${round}`);
+        // Return 403 Forbidden
+        return res.status(403).json({ error: "Invalid secret provided." });
+    }
 
-    // 2. Send HTTP 200 JSON response immediately
-    res.status(200).json({ status: "Request accepted and processing asynchronously." });
+    // 2. Send HTTP 200 JSON response immediately
+    res.status(200).json({ status: "Request accepted and processing asynchronously." });
 
-    // 3. Process Asynchronously 
-    processRequest(data).catch(err => {
-        console.error(`Critical Error during async processing for task ${task}:`, err);
-    });
+    // 3. Process Asynchronously 
+    Promise.resolve().then(() => processRequest(data)).catch(err => {
+        console.error(`Critical Error during async processing for task ${task}:`, err);
+    });
+});
+
+// Basic error handler to avoid uncaught exceptions from crashing the function
+app.use((err, req, res, next) => {
+    console.error('Unhandled error in Express app:', err);
+    try {
+        if (!res.headersSent) res.status(500).json({ error: 'internal_server_error' });
+    } catch (e) {
+        // ignore
+    }
 });
 
 // CRITICAL: Export the Express app instance as the Serverless Function handler
