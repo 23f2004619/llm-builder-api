@@ -1,21 +1,22 @@
 // processor.js
 const { Octokit } = require('octokit');
 const axios = require('axios');
-const { GoogleGenAI } = require('@google/genai'); // NEW: Import Gemini SDK
+const { GoogleGenAI } = require('@google/genai'); // Import Gemini SDK
 
 const GITHUB_PAT = process.env.GITHUB_PAT;
 const GITHUB_USERNAME = process.env.GITHUB_USERNAME;
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY; // NEW: Get Gemini Key
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY; 
 
 const octokit = new Octokit({ auth: GITHUB_PAT });
-const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY }); // NEW: Initialize Gemini client
+// NEW/CLEANED: Initialize Gemini client (used 'ai' object name)
+const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY }); 
 
 // Standard MIT License text
-const MIT_LICENSE = `Permission is hereby granted... (FULL MIT LICENSE TEXT)`; // Ensure this is the full text
+const MIT_LICENSE = `Permission is hereby granted... (FULL MIT LICENSE TEXT)`; 
+// IMPORTANT: Ensure you paste the full MIT License text here!
 
 // --- Notification Helper (Unchanged) ---
 async function postWithRetry(url, payload, retries = 5) {
-    // ... (keep the existing postWithRetry function here)
     for (let i = 0; i < retries; i++) {
         try {
             const response = await axios.post(url, payload, {
@@ -32,7 +33,7 @@ async function postWithRetry(url, payload, retries = 5) {
     }
 }
 
-// --- LLM Interaction Helper (UPDATED for Gemini) ---
+// --- LLM Interaction Helper (Gemini) ---
 async function generateAppCode(brief, attachments, round, existingCode = {}) {
     // 1. Create a detailed, structured prompt for Gemini.
     const systemInstruction = `You are an expert web developer tasked with creating a minimal, functional web application hosted on GitHub Pages. You must satisfy all constraints in the brief. The output MUST be a single JSON object.`;
@@ -48,20 +49,20 @@ ${round === 2 ? `Existing Codebase:\n\nindex.html:\n${existingCode['index.html']
 Generate ONLY the JSON object with the required files.
 Output JSON Format (mandatory):
 {
-  "index.html": "...",
-  "script.js": "...",
-  "README.md": "..."
+    "index.html": "...",
+    "script.js": "...",
+    "README.md": "..."
 }
 `;
 
     // 2. Call the Gemini API using JSON mode.
     try {
         const response = await ai.models.generateContent({
-            model: "gemini-2.5-flash", // Excellent model for code generation
+            model: "gemini-2.5-flash", 
             contents: [{ role: "user", parts: [{ text: userContent }] }],
             config: {
                 systemInstruction: systemInstruction,
-                responseMimeType: "application/json", // Force JSON output
+                responseMimeType: "application/json", 
                 responseSchema: {
                     type: "object",
                     properties: {
@@ -74,7 +75,6 @@ Output JSON Format (mandatory):
             }
         });
 
-        // The response text is guaranteed to be a JSON string due to responseMimeType
         const codeJson = JSON.parse(response.text.trim());
         return codeJson;
 
@@ -84,12 +84,13 @@ Output JSON Format (mandatory):
     }
 }
 
-// --- Main Processor (Logic Unchanged, now uses Gemini function) ---
+// --- Main Processor (The Orchestrator) ---
 async function processRequest(data) {
     const { email, task, round, nonce, brief, attachments, evaluation_url } = data;
     const repoName = `project-${task}`;
+    const GITHUB_PAGES_USERNAME = GITHUB_USERNAME.toLowerCase(); // Ensure username is lowercase for GitHub Pages URL consistency
     const repoUrl = `https://github.com/${GITHUB_USERNAME}/${repoName}`;
-    const pagesUrl = `https://${GITHUB_USERNAME}.github.io/${repoName}/`;
+    const pagesUrl = `https://${GITHUB_PAGES_USERNAME}.github.io/${repoName}/`;
     let commitSha = '';
 
     console.log(`Starting ${round === 1 ? 'Build' : 'Revision'} for task: ${task}`);
@@ -108,10 +109,10 @@ async function processRequest(data) {
             console.log(`Repo created: ${repoUrl}`);
         }
         
-        // 2. Commit and Push logic (using Octokit to manage commits/refs)
-        // ... (Keep the Octokit commit logic from the previous answer)
+        // 2. Commit and Push logic 
         const commitMessage = round === 1 ? 'Initial build via LLM' : `Round 2 Revision: ${brief.substring(0, 50)}...`;
         let baseSha = undefined;
+        
         if (round === 2) {
              const branch = await octokit.rest.repos.getBranch({ owner: GITHUB_USERNAME, repo: repoName, branch: 'main' });
              baseSha = branch.data.commit.sha;
@@ -130,7 +131,11 @@ async function processRequest(data) {
         
         if (round === 1) {
             // 3. Enable GitHub Pages
-            await octokit.rest.repos.createPagesDeployment({ owner: GITHUB_USERNAME, repo: repoName, source: { branch: 'main' } });
+            await octokit.rest.repos.enablePagesOnGitHubPages({
+                owner: GITHUB_USERNAME,
+                repo: repoName,
+                source: { branch: 'main' }
+            });
             console.log("GitHub Pages enabled.");
         }
 
@@ -140,6 +145,8 @@ async function processRequest(data) {
         
     } catch (error) {
         console.error("GitHub/Deployment Error:", error.message);
+        // Log the exact API response if possible
+        console.error("GitHub API Error Details:", error.response?.data);
         throw new Error("Failed during GitHub operations or deployment wait.");
     }
 
