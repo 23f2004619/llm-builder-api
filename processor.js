@@ -1,22 +1,20 @@
-// processor.js
 const { Octokit } = require('octokit');
 const axios = require('axios');
-const { GoogleGenAI } = require('@google/genai'); // Import Gemini SDK
+const { GoogleGenAI } = require('@google/genai');
+
+// REMOVED GLOBAL INITIALIZATION: const octokit = new Octokit({ auth: GITHUB_PAT });
+// REMOVED GLOBAL INITIALIZATION: const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY }); 
 
 const GITHUB_PAT = process.env.GITHUB_PAT;
 const GITHUB_USERNAME = process.env.GITHUB_USERNAME;
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY; 
-
-const octokit = new Octokit({ auth: GITHUB_PAT });
-// NEW/CLEANED: Initialize Gemini client (used 'ai' object name)
-const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY }); 
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
 // Standard MIT License text
-const MIT_LICENSE = `Permission is hereby granted... (FULL MIT LICENSE TEXT)`; 
-// IMPORTANT: Ensure you paste the full MIT License text here!
+const MIT_LICENSE = `Permission is hereby granted... (FULL MIT LICENSE TEXT)`; // Ensure this is the full text
 
 // --- Notification Helper (Unchanged) ---
 async function postWithRetry(url, payload, retries = 5) {
+    // ... (keep the existing postWithRetry function here)
     for (let i = 0; i < retries; i++) {
         try {
             const response = await axios.post(url, payload, {
@@ -34,7 +32,7 @@ async function postWithRetry(url, payload, retries = 5) {
 }
 
 // --- LLM Interaction Helper (Gemini) ---
-async function generateAppCode(brief, attachments, round, existingCode = {}) {
+async function generateAppCode(aiInstance, brief, attachments, round, existingCode = {}) { // NOW ACCEPTS AI INSTANCE
     // 1. Create a detailed, structured prompt for Gemini.
     const systemInstruction = `You are an expert web developer tasked with creating a minimal, functional web application hosted on GitHub Pages. You must satisfy all constraints in the brief. The output MUST be a single JSON object.`;
 
@@ -57,7 +55,7 @@ Output JSON Format (mandatory):
 
     // 2. Call the Gemini API using JSON mode.
     try {
-        const response = await ai.models.generateContent({
+        const response = await aiInstance.models.generateContent({ // USE PASSED INSTANCE
             model: "gemini-2.5-flash", 
             contents: [{ role: "user", parts: [{ text: userContent }] }],
             config: {
@@ -87,8 +85,14 @@ Output JSON Format (mandatory):
 // --- Main Processor (The Orchestrator) ---
 async function processRequest(data) {
     const { email, task, round, nonce, brief, attachments, evaluation_url } = data;
+    
+    // 🎯 NEW: LAZY INITIALIZATION INSIDE THE FUNCTION
+    const octokit = new Octokit({ auth: GITHUB_PAT });
+    const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
+    // This prevents the global crash and confirms variables are loaded before use.
+    
     const repoName = `project-${task}`;
-    const GITHUB_PAGES_USERNAME = GITHUB_USERNAME.toLowerCase(); // Ensure username is lowercase for GitHub Pages URL consistency
+    const GITHUB_PAGES_USERNAME = GITHUB_USERNAME.toLowerCase(); 
     const repoUrl = `https://github.com/${GITHUB_USERNAME}/${repoName}`;
     const pagesUrl = `https://${GITHUB_PAGES_USERNAME}.github.io/${repoName}/`;
     let commitSha = '';
@@ -96,12 +100,12 @@ async function processRequest(data) {
     console.log(`Starting ${round === 1 ? 'Build' : 'Revision'} for task: ${task}`);
 
     // A. CODE GENERATION/REVISION
-    let codeFiles = await generateAppCode(brief, attachments, round);
+    let codeFiles = await generateAppCode(ai, brief, attachments, round); // PASS AI INSTANCE
     if (round === 1) {
         codeFiles['LICENSE'] = MIT_LICENSE; 
     }
     
-    // B. GITHUB BUILD/DEPLOY (Logic Unchanged - uses Octokit)
+    // B. GITHUB BUILD/DEPLOY (Now uses locally initialized Octokit instance)
     try {
         if (round === 1) {
             // 1. Create Repository
@@ -145,7 +149,6 @@ async function processRequest(data) {
         
     } catch (error) {
         console.error("GitHub/Deployment Error:", error.message);
-        // Log the exact API response if possible
         console.error("GitHub API Error Details:", error.response?.data);
         throw new Error("Failed during GitHub operations or deployment wait.");
     }
