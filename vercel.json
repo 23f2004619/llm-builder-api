@@ -5,6 +5,12 @@
       "runtime": "@vercel/node@20"
     }
   },
+  "builds": [
+    {
+      "src": "api.js",
+      "use": "@vercel/node@20"
+    }
+  ],
   "rewrites": [
     {
       "source": "/api-endpoint",
